@@ -1,0 +1,113 @@
+Handoff — Unseen (Android tracker blocker)
+Last updated: 2026-11-22, 22:15 (Asia/Dhaka)
+What it is
+Unseen is an Android app that blocks the trackers hidden inside other apps with one tap, without turning off any app permissions, so the apps keep working.
+Tagline: "Apps can't watch what they can't see."
+Owner: Abu Saeed (GitHub `Abusaeed-bd`). He speaks Bengali, so talk to him in Bengali. The app's UI is English only.
+He wants things simple: one-tap solutions, not long settings checklists.
+Repo: `https://github.com/Abusaeed-bd/Unseen` (public, uploaded by hand through the GitHub website).
+Links
+Plan doc (Bengali): https://claude.ai/artifact/56ZxdDpNXGaa9fUJe9uy85
+Logo canvas: https://claude.ai/artifact/5z9xpNF3114WXwitLn3UNY (final logo is board "Ghost + slash", option A)
+Decisions made
+Topic	Decision
+Name	Unseen
+UI language	English only; Bengali may be added later
+Logo	Option A: white ghost crossed by a purple slash, on a dark rounded tile
+Colours	Background `#12152A`, accent `#8B6CFF`, white `#FFFFFF`
+Package / applicationId	`io.github.abusaeedbd.unseen`
+minSdk / targetSdk	29 (Android 10) / 35
+Stack	Kotlin 2.0.21, Jetpack Compose (BOM 2024.12.01), AGP 8.7.3, Gradle 8.11.1, Java 17
+First release	APK on GitHub, built by GitHub Actions. Not on Play Store yet because of Google Play's VpnService policy
+How it works (v0.1)
+A local `VpnService` routes only the fake DNS server `10.111.222.1/32` into the tunnel and sets it as the phone's DNS server. All other traffic goes out directly.
+The tunnel reader (non-blocking fd + `Os.poll`) parses IPv4/UDP port 53 and reads the DNS question.
+If the domain (or a parent domain) is in `assets/blocklist.txt` (~90 tracker/ad SDK domains), it answers `0.0.0.0` / `::`.
+Otherwise it forwards the query over UDP to 1.1.1.1, then 8.8.8.8, using a protected socket.
+`getConnectionOwnerUid()` finds which app made each blocked request; results go into per-app stats.
+The app adds itself with `addDisallowedApplication`. Apps the user paused are added the same way, so they bypass the VPN.
+Foreground service type is `specialUse`. `BootReceiver` turns protection back on after a reboot if it was on.
+Source layout (`app/src/main/java/io/github/abusaeedbd/unseen/`)
+`UnseenApp.kt`: starts CrashLog, Stats and Blocklist.
+`vpn/UnseenVpnService.kt`: the tunnel, DNS block/forward and notification. `vpn/BootReceiver.kt`: restart after reboot.
+`dns/DnsMessage.kt`, `dns/IpUdpPacket.kt`, `dns/Blocklist.kt` (`DomainMatcher`): pure Kotlin, unit-tested in `app/src/test/.../dns/DnsTest.kt`.
+`data/Prefs.kt`: whether protection should be on, and the paused apps. `data/Stats.kt`: blocked today plus per-app counts (in memory). `data/AppNames.kt`: uid to package and label. `data/CrashLog.kt`: saves the last crash to a file.
+`ui/MainActivity.kt`: VPN consent, notification permission, Private DNS check. `ui/Screens.kt`: Home (big toggle, counter, top apps, Private DNS warning, crash card) and Apps (per-app protect switches). `ui/Theme.kt`.
+`.github/workflows/build.yml`: runs `./gradlew testDebugUnitTest assembleDebug` and uploads the debug APK as an artifact.
+Current status
+v0.1.1 runs on his Nothing phone. bKash works when paused. v0.2.0 (app names + per-app tracker list) was delivered but not uploaded yet.
+v0.3.0 was built on 2026-11-22 and sent as `Unseen-v0.3.0-source.zip`. It is not on GitHub yet: he will upload it himself later. GitHub is still not linked to Claude.
+Nothing has been compiled by Claude (no Android SDK here). Expect possible compile errors on the first Actions run.
+What v0.3.0 added
+Pause and resume: `UnseenVpnService` actions PAUSE/RESUME. A 10-minute pause closes the tunnel, so the VPN and its key icon go away. A Handler resumes it; the notification has a "Resume now" action. State is the `Protection` enum (OFF/ON/PAUSED).
+Quick Settings tile: `vpn/ProtectionTileService.kt`.
+Needs `unlockAndRun` when the phone is locked.
+Turning it off with the app lock on opens `MainActivity` with `ACTION_REQUEST_OFF`.
+If starting the service is refused, it falls back to opening the app.
+App lock: `ui/Auth.kt` uses the framework `BiometricPrompt` (BIOMETRIC_WEAK | DEVICE_CREDENTIAL on 30+, `setDeviceCredentialAllowed` on 29).
+Asked for: turning protection off, pausing, pausing an app, allowing a domain, turning off a filter, changing the lock itself.
+Exposed to Compose through `LocalAuth`.
+Turned-off alert: `onRevoke` sends a high-priority notification and writes an `EventLog` entry. `data/EventLog.kt` keeps the last 50 events, shown in Settings → Activity.
+Always-on VPN: `isAlwaysOn` / `isLockdownEnabled` are read after each `establish()`. Settings shows a guide and warns if lockdown is on, because lockdown would cut the internet.
+Categories: `dns/Blocklist.kt` has `Category` SCAM/TRACKER/AD/GAMBLING, `classify()`, `categoryOf()`, an allowlist, and `Lookalike` (fake bKash/Nagad domains).
+Lists are downloaded by `data/ListUpdater.kt` with WorkManager (daily plus once on first run), with mirrors.
+Ads + gambling come from StevenBlack. Scams come from malware-filter's phishing-filter-hosts + urlhaus-filter-hosts-online.
+Toggles: ads ON, scams ON, gambling OFF by default.
+Scam alert: a notification when a SCAM domain is blocked, rate-limited to once per domain per 10 minutes.
+Stats: `data/Stats.kt` now saves to disk.
+Daily totals by category are kept 60 days; per-app and per-domain counts 7 days. Saves are debounced by 5 s.
+`DayCounts.dataSavedBytes` is an estimate: 3 KB per tracker, 30 KB per ad, shown as "about".
+Weekly report: `data/WeeklyReport.kt`, a WorkManager job every 7 days starting next Friday 20:00, with a Share action.
+Share card: `ui/ShareCard.kt` draws a 1080×1350 PNG and shares it via FileProvider (`${applicationId}.files`, `res/xml/file_paths.xml`).
+Privacy grade: `data/PrivacyGrade.kt` gives A–F. Score = 100 − 12 × tracker companies (max 5) − 8 × sensitive permissions (max 5).
+Onboarding: a first-run welcome screen that explains the key icon. Rocket (`com.dbbl.mbs.apps.main`) was added to the default-paused list.
+Settings screen: what to block, list status with "Update now", app lock, always-on guide, allowed sites, activity history, about/credits.
+New dependency: `androidx.work:work-runtime-ktx:2.10.0`. New permission: `USE_BIOMETRIC`. versionCode 4 / versionName 0.3.0.
+v0.3.1 (2026-11-22 evening)
+v0.3.0 builds green on Actions and runs well on his phone: 221 blocked on day one, grades and lists work.
+v0.3.1 fixes:
+Scrolling ("long") screenshots lost the white text: every scroll container now has an explicit `Ink` background.
+Microsoft and X telemetry, crash SDKs and others got names in `TrackerInfo`. Ad-list domains with no known owner are called "Ad or tracking server".
+Grades and the week card no longer show a fake "Tracker" company: unknown domains appear as "N unnamed trackers".
+Files changed: `ui/Screens.kt`, `data/TrackerInfo.kt`, `data/PrivacyGrade.kt`, `data/Stats.kt`, `app/build.gradle.kts`.
+v0.3.2: iOS 18 dark redesign (2026-11-22 night)
+He supplied an HTML prototype (`unseen_ios_18_ui_prototype.html`) and asked to apply it. This version is a UI-only rewrite:
+Colours: `ui/Theme.kt` uses the iOS dark palette (black, #1C1C1E grouped, #8E8E93 labels, iOS green/orange/blue) plus the brand purple #8B6CFF / #A78BFA.
+Components: `ui/Components.kt` adds IosGroup, IosHairline, section header/footer, LargeTitle, IosSwitch (51×31 spring), IosSwitchRow, IosSegmented, IosSearchField, GradeBadge, CountPill, PillButton, PrimaryButton, AppIcon and HudPill (`LocalHud` for top toast messages).
+Screens: `ui/Screens.kt` was rewritten.
+Bottom tab bar: Overview / Apps / Settings.
+Overview: glowing orb with a pulse animation and a pause countdown in mm:ss, plus cards for blocked today (with an "On-Device DNS" badge), last 7 days and top apps (with grade badges).
+Apps: large title with a protected count, search, an All/Protected/Paused segmented control, and grouped rows with grade, category (`ApplicationInfo.getCategoryTitle`) and an iOS switch.
+App detail: frosted top bar with Back.
+Settings: grouped sections and an activity timeline.
+Share sheet: a bottom sheet with a 4:5 card preview.
+Share image: `ui/ShareCard.kt` now draws the same card as a 1080×1350 PNG.
+New drawables: `ic_brand_ghost`, `ic_brand_ghost_plain`, `ic_tab_*`, chevrons, search, close, share. `themes.xml` window background is now black.
+Left out on purpose: the prototype's fake iPhone status bar and Dynamic Island.
+versionCode 6 / versionName 0.3.2. Not compiled here.
+Release status: there are no GitHub Releases yet. He wants others to download the APK. Claude explained the manual release steps and offered a fixed signing key + tag-triggered release workflow. He has not answered yet. Debug APKs from CI change their signing key on every run, so users can't update over an older install.
+Next steps
+He uploads v0.3.0. Watch the Actions build and fix any compile errors.
+Test on the phone:
+Lists download (Settings shows the counts)
+Ads blocked in a game
+Pause and auto-resume
+Tile
+App lock
+Turning the VPN off from phone settings shows the alert
+Share card looks right
+Grades show in the Apps list
+Check that Facebook, YouTube and Messenger still work with ad blocking ON. If something breaks, find the domain and add it to a built-in allow list.
+Later ideas:
+Home screen widget
+DNS-over-HTTPS upstream
+Per-app firewall
+Installed-app tracker scan
+Family mode (PIN-locked adult-site blocking)
+Lite mode via Private DNS (no key icon, but no per-app detail)
+Before Play Store: review the VpnService policy, `QUERY_ALL_PACKAGES`, and OpenPhish's non-commercial terms
+Known limits / risks
+One VPN at a time on Android.
+Apps with their own encrypted DNS or hard-coded IPs bypass the blocking.
+DNS over TCP to `10.111.222.1` is dropped (rare).
+Play Store VpnService policy needs review before any Play release.
